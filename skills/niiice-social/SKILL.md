@@ -53,7 +53,7 @@ metadata:
 
 ## 建議流程
 
-1. `options` → 和使用者確認：哪些帳號（`accounts[].id`）、主題、任務（purpose）、語氣、篇幅；額度是否夠。
+1. `options` → 和使用者確認：哪些帳號（`accounts[].account_id`）、主題、任務（purpose）、語氣、篇幅；額度是否夠。
 2. 取得同意後 `draft … --id <穩定 id> --confirm`。id 由你產生並保存（8–120 字，例如 `claude-2026-08-17-新品上市-1`）；**重試只能用同一個 id**（回原草稿、不重扣額度）。
 3. `get-draft` 輪詢到 `ready`。job 還在跑就說在跑，不猜結果。
 4. 要附圖：`upload-media --url … --confirm` → 拿 `media_url` → `attach-media --draft … --urls … --confirm`。
