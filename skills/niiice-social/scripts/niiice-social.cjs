@@ -343,9 +343,13 @@ const HELP = `niiice-social — Niiice Turbo 社群 MCP CLI（零依賴）
   schedule --draft <id> --at <ISO 時間> --token <confirmation_token> --id <client_request_id> [--confirm]
                                                              schedule_draft（沒 --confirm 只印預覽；只能排 ≥30 分鐘後）
   cancel-schedule --draft <id> --id <client_request_id> [--confirm]   cancel_scheduled_draft
+  add-item --type faq|kb [--brand <brand_id>|general] (--list <list_id> | --list-name <名稱>)
+           --q <問題> --a <答案> [--tags a,b] | --title <標題> --content <內容> [--confirm]
+                                                             add_brand_library_item（沒 --confirm 只印預覽；同清單同內容拿回原條目）
 
 捷徑（讀取連線）
   inbox                                                      get_social_inbox_summary
+  library [--brand <brand_id>|general] [--kind faq|kb|datasets|all] [--per-list N]   get_brand_library（品牌資源庫內容）
 
 規則：重試用同一個 --id；排程要先 preview-schedule 拿 --token 並向使用者確認；排好只是「已排程」，不是已發布。
 `;
@@ -510,6 +514,34 @@ async function run(argv, deps = {}) {
     }
     case "inbox":
       return callAndPrint(readUrl(), "get_social_inbox_summary", {});
+    case "library": {
+      const args = {};
+      if (typeof flags.brand === "string" && flags.brand.trim()) args.brand_id = flags.brand.trim();
+      if (typeof flags.kind === "string" && flags.kind.trim()) args.kind = flags.kind.trim();
+      if (typeof flags["per-list"] === "string" && Number.isFinite(Number(flags["per-list"]))) args.items_per_list = Number(flags["per-list"]);
+      return callAndPrint(readUrl(), "get_brand_library", args);
+    }
+    case "add-item": {
+      const url = composeUrl();
+      const type = requireFlag(flags, "type", "faq 或 kb（知識庫）");
+      const args = { list_type: type, confirm: true };
+      if (typeof flags.brand === "string" && flags.brand.trim()) args.brand_id = flags.brand.trim();
+      if (typeof flags.list === "string" && flags.list.trim()) args.list_id = flags.list.trim();
+      else args.list_name = requireFlag(flags, "list-name", "清單名稱（沒 --list 時用它找，找不到就建）");
+      if (type === "faq") {
+        args.question = requireFlag(flags, "q", "FAQ 問題");
+        if (typeof flags.a === "string") args.answer = flags.a;
+        const tags = csv(flags.tags);
+        if (tags.length) args.tags = tags;
+      } else {
+        args.content = requireFlag(flags, "content", "知識庫條目內容");
+        if (typeof flags.title === "string" && flags.title.trim()) args.title = flags.title.trim();
+      }
+      if (!confirm) {
+        return printDryRun(io, { url, tool: "add_brand_library_item", args, hint: `這會把條目寫進品牌資源庫（客服 AI 與社群 AI 立即可引用）。請先向使用者唸出要寫進哪個品牌／哪個清單、寫什麼，取得同意後加上 ${CONFIRM_FLAG} 才會送出；同清單同內容重送會拿回原條目。` });
+      }
+      return callAndPrint(url, "add_brand_library_item", args);
+    }
     default:
       throw new Error(`未知指令：${command}\n${HELP}`);
   }

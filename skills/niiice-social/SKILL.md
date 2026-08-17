@@ -13,13 +13,14 @@ metadata:
 
 | 連線 | 能做什麼 | 不能做什麼 |
 |------|---------|-----------|
-| 讀取連線（`niiice-social-inbox`） | 貼文、留言、成效、雷達關鍵字、Outreach、品牌、行事曆、用量（17 顆唯讀工具） | 任何寫入 |
-| 產草稿連線（`niiice-social-compose`） | 產貼文草稿（用使用者的 AI 額度）、以網址上傳圖片並附到草稿；若使用者建立時勾了「允許 AI 排程發布」，還能預覽／排程／取消排程 | **立即發布**、回覆、刪除、隱藏、按讚 |
+| 讀取連線（`niiice-social-inbox`） | 貼文、留言、成效、雷達關鍵字、Outreach、品牌、**品牌資源庫內容**、行事曆、用量（18 顆唯讀工具） | 任何寫入 |
+| 產草稿連線（`niiice-social-compose`） | 產貼文草稿（用使用者的 AI 額度）、以網址上傳圖片並附到草稿、**新增品牌資源庫的 FAQ／知識庫條目**；若使用者建立時勾了「允許 AI 排程發布」，還能預覽／排程／取消排程 | **立即發布**、回覆、刪除、隱藏、按讚；刪除或修改資源庫既有條目、動資料表 |
 
 ## 何時用
 
 - 使用者要「幫我寫一篇 FB／IG／Threads 貼文」「排一篇下週三早上的貼文」「把這張圖附到剛剛那份草稿」→ 產草稿連線。
-- 使用者要「看有哪些留言還沒回」「上週哪篇最好」「雷達關鍵字最近在講什麼」→ 讀取連線（`inbox`、`call --read`）。
+- 使用者要「看有哪些留言還沒回」「上週哪篇最好」「雷達關鍵字最近在講什麼」「品牌 FAQ 寫了什麼」→ 讀取連線（`inbox`、`library`、`call --read`）。
+- 使用者要「把這條 Q&A 加進品牌 FAQ」「把這段說明放進知識庫」→ 產草稿連線 `add-item`（唸出品牌／清單／內容、取得同意後才 `--confirm`）。
 - 使用者要**立刻發**：不要試——本 MCP 沒有立即發布，請他到 Niiice Turbo 發文工作台自己按；你可以先幫他把草稿與圖準備好、給他 `resume_url`。
 
 ## Setup
@@ -50,6 +51,8 @@ metadata:
 | `schedule --draft <id> --at <ISO> --token <confirmation_token> --id <crid> [--confirm]` | `schedule_draft` | 只能排 ≥30 分鐘後、≤90 天；**沒 `--confirm` 只印預覽** |
 | `cancel-schedule --draft <id> --id <crid> [--confirm]` | `cancel_scheduled_draft` | 只取消還沒發出去的；**沒 `--confirm` 只印預覽** |
 | `inbox` | `get_social_inbox_summary`（讀取連線） | 未回覆要講平台／作者／時間／內容，不可只報數字 |
+| `library [--brand <id>\|general] [--kind faq\|kb\|datasets\|all] [--per-list N]` | `get_brand_library`（讀取連線） | 品牌資源庫**內容**（FAQ／知識庫條目、資料表清單）；`get_brands` 只有數量。每清單預設 50 條、超過會標示 |
+| `add-item --type faq\|kb [--brand <id>\|general] (--list <list_id> \| --list-name <名稱>) --q/--a \| --title/--content [--tags] [--confirm]` | `add_brand_library_item` | 寫入品牌資源庫；沒 `--list` 用 `--list-name` 找、找不到就建；同清單同內容拿回原條目；**沒 `--confirm` 只印預覽**；不能刪改既有條目、不能動資料表 |
 
 ## 建議流程
 
@@ -63,7 +66,7 @@ metadata:
 
 ## 安全規則
 
-- **確認閘**：`draft`／`upload-media`／`attach-media`／`schedule`／`cancel-schedule` 沒帶 `--confirm` 只印預覽不送。加 `--confirm` 之前必須已經向使用者確認。伺服器端另有自己的確認閘（`confirm_generation`、`confirmation_token`）——CLI 的 `--confirm` 不會替使用者同意任何事。
+- **確認閘**：`draft`／`upload-media`／`attach-media`／`schedule`／`cancel-schedule`／`add-item` 沒帶 `--confirm` 只印預覽不送。加 `--confirm` 之前必須已經向使用者確認。伺服器端另有自己的確認閘（`confirm_generation`、`confirmation_token`）——CLI 的 `--confirm` 不會替使用者同意任何事。
 - **同 id 重試**：`draft` 與 `schedule` 的 `--id` 是冪等鍵。收到「稍後再試」「佇列暫時不可用」「confirmation_stale」時**都不要換 id**；`confirmation_stale` 要重新 `preview-schedule` 再向使用者確認、然後同 id 重送。
 - **不聲稱已發布**：排程 ≠ 發布；草稿完成 ≠ 發布；圖片只有 `attach-media` 成功回應後才能說已附上。
 - **不能立即發布**：`scheduled_at` 必須 ≥ 現在＋30 分鐘、≤90 天；使用者要立刻發就指路到發文工作台。

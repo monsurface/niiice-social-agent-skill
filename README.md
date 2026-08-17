@@ -40,8 +40,8 @@ node skills/niiice-social/scripts/niiice-social.cjs setup \
 
 | 連線 | 能做 | 不能做 |
 |---|---|---|
-| 讀取 | 貼文、留言工作匣、成效與曲線、Threads 雷達、Outreach、品牌、行事曆、用量（17 顆唯讀工具） | 任何寫入 |
-| 產草稿 | 產貼文草稿（用你的 AI 額度）、以網址上傳圖片並附到草稿 | 立即發布、回覆、刪除、隱藏、按讚 |
+| 讀取 | 貼文、留言工作匣、成效與曲線、Threads 雷達、Outreach、品牌、品牌資源庫內容、行事曆、用量（18 顆唯讀工具） | 任何寫入 |
+| 產草稿 | 產貼文草稿（用你的 AI 額度）、以網址上傳圖片並附到草稿、新增品牌資源庫的 FAQ／知識庫條目 | 立即發布、回覆、刪除、隱藏、按讚；刪改資源庫既有條目 |
 | 產草稿＋排程 | 以上加：預覽排程、排程（≥30 分鐘後、≤90 天）、取消排程 | **立即發布**（永遠不提供） |
 
 ## CLI 速查
@@ -61,11 +61,13 @@ preview-schedule --draft <id> --at <ISO 含時區>
 schedule --draft <id> --at <ISO> --token <confirmation_token> --id <crid> [--confirm]
 cancel-schedule --draft <id> --id <crid> [--confirm]
 inbox                                         # 未回覆留言摘要（讀取連線）
+library [--brand <id>|general] [--kind faq|kb|datasets|all] [--per-list N]   # 品牌資源庫內容（讀取連線）
+add-item --type faq|kb [--brand <id>|general] (--list <id> | --list-name <名稱>) --q/--a | --title/--content [--confirm]
 ```
 
 ### 三條安全規則
 
-1. **寫入捷徑沒帶 `--confirm` 只印預覽、不送出**（`draft`／`upload-media`／`attach-media`／`schedule`／`cancel-schedule`）。
+1. **寫入捷徑沒帶 `--confirm` 只印預覽、不送出**（`draft`／`upload-media`／`attach-media`／`schedule`／`cancel-schedule`／`add-item`）。
 2. **重試要用同一個 `--id`**：它是冪等鍵。收到「稍後再試」或 `confirmation_stale` 時**都不要換 id**——換了會產生兩份、扣兩次額度。
 3. **排程 ≠ 發布**：排好只能說「已排程於 台北 …，到行事曆可改可刪」。
 
