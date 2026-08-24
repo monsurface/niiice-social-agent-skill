@@ -11,10 +11,13 @@
  * - 讀取連線（read_only）＝ `NIIICE_SOCIAL_READ_MCP_URL`／config.readMcpUrl —— `inbox`、`--read` 打這條
  *
  * 安全規則（與 SKILL.md 同義）：
- * - 所有會寫入／消耗額度的捷徑（draft／upload-media／attach-media／schedule／cancel-schedule）
+ * - 所有會寫入／消耗額度的捷徑（draft／direct-draft／upload-media／attach-media／schedule／cancel-schedule／
+ *   publish／update-schedule／delete-schedule）
  *   **沒帶 `--confirm` 就只印預覽、不送出**；帶了才送。
  * - 重試一律用同一個 `--id`（client_request_id）；換 id ＝ 再生成一份／再排一次。
- * - 排程只能排 ≥30 分鐘後、不能立即發布；`schedule` 必帶 `preview-schedule` 回的 `--token`。
+ * - 排程只能排 ≥30 分鐘後；`schedule` 必帶 `preview-schedule` 回的 `--token`。
+ * - 立即發布（`publish`，2026-08-24 批 A）必帶 `preview-publish` 回的 `--token`，且連線要有「允許立即發布」
+ *   能力——沒有的話那兩顆工具在 `tools/list` 根本看不到（打了會回「未知的工具」，不是權限錯誤）。
  * - CLI 不會替你說「已發布」：排好只是「已排程」。
  */
 "use strict";
@@ -334,6 +337,9 @@ const HELP = `niiice-social — Niiice Turbo 社群 MCP CLI（零依賴）
 捷徑（產草稿連線）
   options                                                    get_compose_options
   draft --topic <主題> --accounts a,b --id <client_request_id> [--purpose] [--tone] [--length] [--hook] [--cta]
+        [--template <版型 key>]  版型庫（options.templates[].key）
+        [--rewrite <原文>] [--rewrite-directions attract,condense] [--rewrite-chain 0|2-10]
+          改寫線：帶了 --rewrite 就不要帶 --topic（二擇一）；--rewrite-chain 0 ＝段數交給 AI
         [--task-input] [--instructions] [--media url1,url2] [--confirm]     create_post_draft（沒 --confirm 只印預覽）
   get-draft <draft_id> | --draft <draft_id>                  get_draft
   drafts [--limit N]                                         list_recent_drafts
@@ -343,15 +349,45 @@ const HELP = `niiice-social — Niiice Turbo 社群 MCP CLI（零依賴）
   schedule --draft <id> --at <ISO 時間> --token <confirmation_token> --id <client_request_id> [--confirm]
                                                              schedule_draft（沒 --confirm 只印預覽；只能排 ≥30 分鐘後）
   cancel-schedule --draft <id> --id <client_request_id> [--confirm]   cancel_scheduled_draft
+  direct-draft --accounts <id,id> --content <文字> --id <crid> [--first-comment <文字>] [--link <url>] [--confirm]
+                                                             create_direct_draft（你自己寫好的文案；不扣 AI 額度）
+  split-preview --text <文字> [--parts <2-10>]               preview_thread_split（零副作用）
+  preview-publish --draft <id>                               preview_publish（零副作用；需「允許立即發布」的連線）
+  publish --draft <id> --token <confirmation_token> --id <crid> [--confirm]
+                                                             publish_draft（⚠ 立即發布，發出去收不回來）
+  schedules [--id <schedule_id>] [--limit <n>]               list_schedules
+  update-schedule --id <schedule_id> [--content …] [--at …] [--urls …] [--topic-tag …] [--first-comment …] [--link …] [--confirm]
+                                                             update_schedule（只帶要改的欄位）
+  delete-schedule --id <schedule_id> [--confirm]             delete_schedule
   add-item --type faq|kb [--brand <brand_id>|general] (--list <list_id> | --list-name <名稱>)
            --q <問題> --a <答案> [--tags a,b] | --title <標題> --content <內容> [--confirm]
                                                              add_brand_library_item（沒 --confirm 只印預覽；同清單同內容拿回原條目）
+
+留言互動（需「允許留言互動」的連線；每一支沒 --confirm 都只印預覽、不送出）
+  reply --account <id> --platform threads|facebook|instagram --comment <comment_id>
+        --message <文字> [--image <url>] --id <crid> [--confirm]      reply_comment
+  like --account <id> --comment <comment_id> --id <crid> [--unlike] [--confirm]   like_comment（僅 Facebook）
+  hide --account <id> --platform … --comment <id> --id <crid> [--unhide] [--confirm]   hide_comment
+  delete-comment --account <id> --platform … --comment <id> --id <crid> [--confirm]
+                                                             delete_comment（⚠ 雙確認；刪掉救不回來）
+  restore-intercept --intercept <id> --id <crid> [--confirm]  restore_scam_intercept
+  first-comment --post <social_post_id> --text <文字> [--image <url>] --id <crid> [--confirm]   post_first_comment
+  approve-outreach --mention <id> [--message <文字>] [--account <id>] --id <crid> [--confirm]
+                                                             approve_outreach_reply（排入佇列，**不是**立即送出）
+  dismiss-outreach --mention <id> --id <crid> [--confirm]     dismiss_outreach_reply
+
+擬稿（只回稿、不送出；任何 compose 連線都有）
+  viral-check [--mode check|boost] [--content <文字>] [--dimension <維度>] [--job <job_id>]
+                                                             viral_check（佇列式：先拿 job_id，再帶 --job 查結果）
+  draft --kind <kind> [--content …] [--keyword …] [--post <id>] [--mention <id>] [--account <id>] …
+                                                             draft_assist（kind 見 SKILL.md）
 
 捷徑（讀取連線）
   inbox                                                      get_social_inbox_summary
   library [--brand <brand_id>|general] [--kind faq|kb|datasets|all] [--per-list N]   get_brand_library（品牌資源庫內容）
 
-規則：重試用同一個 --id；排程要先 preview-schedule 拿 --token 並向使用者確認；排好只是「已排程」，不是已發布。
+規則：重試用同一個 --id；排程要先 preview-schedule 拿 --token、立即發布要先 preview-publish 拿 --token，兩者都要向使用者確認。
+      排好只是「已排程」不是已發布；立即發布**發出去收不回來**，回報時只能照逐帳號的結果講。
 `;
 
 /* ------------------------------------------------------------------ */
@@ -436,11 +472,26 @@ async function run(argv, deps = {}) {
       return callAndPrint(composeUrl(), "get_compose_options", {});
     case "draft": {
       const url = composeUrl();
-      const topic = requireFlag(flags, "topic", "這篇要講什麼");
+      // ⚠ topic 與 --rewrite 二擇一：改寫線帶的是原文，不是主題（伺服器端也會擋，這裡先講人話）
+      const rewriteSource = typeof flags.rewrite === "string" ? flags.rewrite.trim() : "";
+      const topic = rewriteSource ? String(flags.topic || "").trim() : requireFlag(flags, "topic", "這篇要講什麼");
+      if (rewriteSource && topic) {
+        throw new Error("--topic 與 --rewrite 只能擇一：要改寫既有原文就不要帶 --topic");
+      }
       const accounts = csv(requireFlag(flags, "accounts", "帳號 id，逗號分隔（先用 options 查）"));
       if (!accounts.length) throw new Error("--accounts 至少一個帳號 id");
       const id = requireClientRequestId(flags);
-      const args = { account_ids: accounts, topic, client_request_id: id, confirm_generation: true };
+      const args = { account_ids: accounts, client_request_id: id, confirm_generation: true };
+      if (topic) args.topic = topic;
+      if (rewriteSource) {
+        const rewrite = { source: rewriteSource };
+        const directions = csv(flags["rewrite-directions"]);
+        if (directions.length) rewrite.directions = directions;
+        const segments = Number.parseInt(String(flags["rewrite-chain"] ?? ""), 10);
+        // 0 ＝ 自動（AI 依原文份量決定段數）；不帶這個旗標就整個不開串文
+        if (Number.isInteger(segments)) rewrite.chain = { enabled: true, segments };
+        args.rewrite = rewrite;
+      }
       const optional = {
         purpose: flags.purpose,
         tone: flags.tone,
@@ -450,6 +501,7 @@ async function run(argv, deps = {}) {
         task_input: flags["task-input"],
         instructions: flags.instructions,
         language: flags.language,
+        template_key: flags.template,
       };
       for (const [key, value] of Object.entries(optional)) if (typeof value === "string" && value.trim()) args[key] = value.trim();
       const media = csv(flags.media);
@@ -511,6 +563,190 @@ async function run(argv, deps = {}) {
       const args = { draft_id: draftId, client_request_id: id };
       if (!confirm) return printDryRun(io, { url, tool: "cancel_scheduled_draft", args, hint: `這會取消這份草稿還沒發出去的排程（已發出的不會被收回）。確認後加上 ${CONFIRM_FLAG} 才會送出。` });
       return callAndPrint(url, "cancel_scheduled_draft", args);
+    }
+    /* ── 批 A（2026-08-24）：直接發文／串文預覽／立即發布／任意排程管理 ── */
+    case "direct-draft": {
+      const url = composeUrl();
+      const accounts = csv(requireFlag(flags, "accounts", "帳號 id，逗號分隔（options 的 accounts[].id）"));
+      if (!accounts.length) throw new Error("--accounts 至少一個帳號 id");
+      const content = requireFlag(flags, "content", "要發的文字（你自己寫好的文案）");
+      const id = requireClientRequestId(flags);
+      const args = { account_ids: accounts, content, client_request_id: id, confirm: true };
+      if (typeof flags["first-comment"] === "string" && flags["first-comment"].trim()) args.first_comment = flags["first-comment"].trim();
+      if (typeof flags.link === "string" && flags.link.trim()) args.link = flags.link.trim();
+      if (!confirm) {
+        return printDryRun(io, { url, tool: "create_direct_draft", args, hint: `這會用你給的文字建一份草稿（**不經 AI 生成、不扣 AI 額度**）。把要發的帳號與完整文案唸給使用者確認後，加上 ${CONFIRM_FLAG} 才會送出；重試沿用同一個 --id。` });
+      }
+      return callAndPrint(url, "create_direct_draft", args);
+    }
+    case "split-preview": {
+      // 零副作用：不需要 --confirm
+      const text = requireFlag(flags, "text", "要切成串文的文字");
+      const args = { text };
+      const parts = Number(flags.parts);
+      if (Number.isFinite(parts) && parts >= 2) args.parts = Math.trunc(parts);
+      return callAndPrint(composeUrl(), "preview_thread_split", args);
+    }
+    case "preview-publish": {
+      // 零副作用：不需要 --confirm（但連線要有「允許立即發布」能力，否則是「未知的工具」）
+      const draftId = requireFlag(flags, "draft", "draft_id");
+      return callAndPrint(composeUrl(), "preview_publish", { draft_id: draftId });
+    }
+    case "publish": {
+      const url = composeUrl();
+      const draftId = requireFlag(flags, "draft", "draft_id");
+      const token = requireFlag(flags, "token", "preview-publish 回傳的 confirmation_token（排程的 token 不能用）");
+      const id = requireClientRequestId(flags);
+      const args = { draft_id: draftId, confirmation_token: token, client_request_id: id };
+      if (!confirm) {
+        return printDryRun(io, { url, tool: "publish_draft", args, hint: `⚠ 這會**當場把貼文發到平台，發出去收不回來**。請先把 preview-publish 的每個帳號與文案逐一唸給使用者、取得明確同意，再加上 ${CONFIRM_FLAG}；重試沿用同一個 --id（不會發第二次）。` });
+      }
+      return callAndPrint(url, "publish_draft", args);
+    }
+    case "schedules": {
+      const args = {};
+      if (typeof flags.id === "string" && flags.id.trim()) args.schedule_id = flags.id.trim();
+      const limit = Number(flags.limit);
+      if (Number.isFinite(limit) && limit > 0) args.limit = Math.trunc(limit);
+      return callAndPrint(composeUrl(), "list_schedules", args);
+    }
+    case "update-schedule": {
+      const url = composeUrl();
+      const scheduleId = requireFlag(flags, "id", "schedule_id（先用 schedules 查）");
+      const args = { schedule_id: scheduleId };
+      // ⚠ 只帶明講的欄位：沒帶＝保留原值、空字串＝清除（與後端 key-present 語義一致）
+      for (const [flag, key] of [["content", "content"], ["at", "scheduled_at"], ["topic-tag", "topic_tag"], ["first-comment", "first_comment"], ["link", "link"]]) {
+        if (typeof flags[flag] === "string") args[key] = flags[flag];
+      }
+      if (typeof flags.urls === "string") args.media_urls = csv(flags.urls);
+      if (Object.keys(args).length === 1) throw new Error("至少帶一個要改的欄位：--content／--at／--urls／--topic-tag／--first-comment／--link");
+      if (!confirm) return printDryRun(io, { url, tool: "update_schedule", args, hint: `這會改行事曆上那一則排程。先用 schedules 唸出它的時間與文案開頭跟使用者確認是同一則，再加上 ${CONFIRM_FLAG}。` });
+      return callAndPrint(url, "update_schedule", args);
+    }
+    case "delete-schedule": {
+      const url = composeUrl();
+      const scheduleId = requireFlag(flags, "id", "schedule_id（先用 schedules 查）");
+      const args = { schedule_id: scheduleId, confirm: true };
+      if (!confirm) return printDryRun(io, { url, tool: "delete_schedule", args, hint: `這會刪掉那一則還沒發出去的排程（已發布的貼文不受影響也收不回來）。先用 schedules 確認是同一則，再加上 ${CONFIRM_FLAG}。` });
+      return callAndPrint(url, "delete_schedule", args);
+    }
+    // ── 批 C：留言互動（cap engage）──
+    // ⚠ 每一支都走同一個模式：沒 --confirm 只印預覽（**不打後端**），有 --confirm 才真的送。
+    case "reply": {
+      const url = composeUrl();
+      const args = {
+        account_id: requireFlag(flags, "account", "account_id"),
+        platform: requireFlag(flags, "platform", "threads／facebook／instagram"),
+        comment_id: requireFlag(flags, "comment", "comment_id"),
+        message: requireFlag(flags, "message", "回覆內容"),
+        client_request_id: requireClientRequestId(flags),
+        confirm: true,
+      };
+      if (typeof flags.image === "string" && flags.image.trim()) args.image_url = flags.image.trim();
+      if (flags["new-comment"] === true) args.is_new_comment = true;
+      if (!confirm) return printDryRun(io, { url, tool: "reply_comment", args, hint: `這會**以使用者的帳號在平台上留言**。請先把原留言與你要回的內容唸給使用者、取得同意，再加上 ${CONFIRM_FLAG}；重試沿用同一個 --id（不會回第二次）。` });
+      return callAndPrint(url, "reply_comment", args);
+    }
+    case "like": {
+      const url = composeUrl();
+      const args = {
+        account_id: requireFlag(flags, "account", "account_id"),
+        platform: "facebook",
+        comment_id: requireFlag(flags, "comment", "comment_id"),
+        client_request_id: requireClientRequestId(flags),
+        confirm: true,
+      };
+      if (flags.unlike === true) args.unlike = true;
+      if (!confirm) return printDryRun(io, { url, tool: "like_comment", args, hint: `按讚也是會被對方看到的動作。確認是哪一則之後再加上 ${CONFIRM_FLAG}。` });
+      return callAndPrint(url, "like_comment", args);
+    }
+    case "hide": {
+      const url = composeUrl();
+      const args = {
+        account_id: requireFlag(flags, "account", "account_id"),
+        platform: requireFlag(flags, "platform", "threads／facebook／instagram"),
+        comment_id: requireFlag(flags, "comment", "comment_id"),
+        client_request_id: requireClientRequestId(flags),
+        confirm: true,
+      };
+      if (flags.unhide === true) args.hide = false;
+      if (!confirm) return printDryRun(io, { url, tool: "hide_comment", args, hint: `這會隱藏（或取消隱藏）那則留言——可逆，但對方可能會發現。唸給使用者確認後加上 ${CONFIRM_FLAG}。` });
+      return callAndPrint(url, "hide_comment", args);
+    }
+    case "delete-comment": {
+      const url = composeUrl();
+      const args = {
+        account_id: requireFlag(flags, "account", "account_id"),
+        platform: requireFlag(flags, "platform", "threads／facebook／instagram"),
+        comment_id: requireFlag(flags, "comment", "comment_id"),
+        client_request_id: requireClientRequestId(flags),
+        confirm: true,
+        confirm_delete: true,
+      };
+      if (!confirm) return printDryRun(io, { url, tool: "delete_comment", args, hint: `⚠ **刪掉的留言平台救不回來**。如果只是不想讓它出現，請改用 hide（可以再取消隱藏）。確定要刪就把原文唸給使用者、取得同意，再加上 ${CONFIRM_FLAG}。` });
+      return callAndPrint(url, "delete_comment", args);
+    }
+    case "restore-intercept": {
+      const url = composeUrl();
+      const args = { intercept_id: requireFlag(flags, "intercept", "intercept_id"), client_request_id: requireClientRequestId(flags), confirm: true };
+      if (!confirm) return printDryRun(io, { url, tool: "restore_scam_intercept", args, hint: `這會把被詐騙攔截隱藏的留言取消隱藏。確認是誤判之後加上 ${CONFIRM_FLAG}。` });
+      return callAndPrint(url, "restore_scam_intercept", args);
+    }
+    case "first-comment": {
+      const url = composeUrl();
+      const args = {
+        social_post_id: requireFlag(flags, "post", "social_post_id"),
+        text: requireFlag(flags, "text", "首則留言內容"),
+        client_request_id: requireClientRequestId(flags),
+        confirm: true,
+      };
+      if (typeof flags.image === "string" && flags.image.trim()) args.image_url = flags.image.trim();
+      if (!confirm) return printDryRun(io, { url, tool: "post_first_comment", args, hint: `這會在那則貼文底下留一則留言。唸給使用者確認內容後加上 ${CONFIRM_FLAG}。` });
+      return callAndPrint(url, "post_first_comment", args);
+    }
+    case "approve-outreach": {
+      const url = composeUrl();
+      const mention = Number(requireFlag(flags, "mention", "mention_id"));
+      if (!Number.isInteger(mention)) throw new Error("--mention 要是數字（mention_id）");
+      const args = { mention_id: mention, client_request_id: requireClientRequestId(flags), confirm: true };
+      if (typeof flags.message === "string" && flags.message.trim()) args.reply_text = flags.message.trim();
+      if (typeof flags.account === "string" && flags.account.trim()) args.account_id = flags.account.trim();
+      if (!confirm) return printDryRun(io, { url, tool: "approve_outreach_reply", args, hint: `這會把回覆**排進送出佇列**（不是立即送出——送出時間由防封號機制決定）。唸給使用者確認內容後加上 ${CONFIRM_FLAG}；回報時只能說「已排入佇列」。` });
+      return callAndPrint(url, "approve_outreach_reply", args);
+    }
+    case "dismiss-outreach": {
+      const url = composeUrl();
+      const mention = Number(requireFlag(flags, "mention", "mention_id"));
+      if (!Number.isInteger(mention)) throw new Error("--mention 要是數字（mention_id）");
+      const args = { mention_id: mention, client_request_id: requireClientRequestId(flags), confirm: true };
+      if (!confirm) return printDryRun(io, { url, tool: "dismiss_outreach_reply", args, hint: `這會把那則草稿收掉（不回覆、也不排進佇列）。確認是哪一則後加上 ${CONFIRM_FLAG}。` });
+      return callAndPrint(url, "dismiss_outreach_reply", args);
+    }
+    // ── 批 C：擬稿（只回稿；**沒有 --confirm 這回事**，因為它不送出任何東西）──
+    case "viral-check": {
+      const args = {};
+      if (typeof flags.job === "string" && flags.job.trim()) args.job_id = flags.job.trim();
+      else {
+        args.mode = typeof flags.mode === "string" && flags.mode.trim() ? flags.mode.trim() : "check";
+        if (typeof flags.content === "string") args.content = flags.content;
+        for (const [flag, key] of [["dimension", "dimension"], ["platform", "platform"], ["account", "account_id"], ["language", "language"], ["id", "client_request_id"]]) {
+          if (typeof flags[flag] === "string" && flags[flag].trim()) args[key] = flags[flag].trim();
+        }
+      }
+      return callAndPrint(composeUrl(), "viral_check", args);
+    }
+    case "draft": {
+      const args = { kind: requireFlag(flags, "kind", "擬稿種類（見 SKILL.md）") };
+      for (const [flag, key] of [
+        ["target", "target"], ["value", "value"], ["content", "content"], ["keyword", "keyword"],
+        ["prompt", "custom_prompt"], ["purpose", "purpose"], ["platform", "platform"], ["account", "account_id"],
+        ["hook-type", "hook_type"], ["post", "social_post_id"], ["bio", "biography"],
+        ["comment-text", "comment_text"], ["post-text", "post_text"], ["author", "author"], ["language", "language"],
+      ]) {
+        if (typeof flags[flag] === "string" && flags[flag].trim()) args[key] = flags[flag].trim();
+      }
+      if (typeof flags.mention === "string" && Number.isInteger(Number(flags.mention))) args.mention_id = Number(flags.mention);
+      return callAndPrint(composeUrl(), "draft_assist", args);
     }
     case "inbox":
       return callAndPrint(readUrl(), "get_social_inbox_summary", {});
