@@ -279,6 +279,51 @@ function printDryRun(io, { url, tool, args, hint }) {
   return 0;
 }
 
+/**
+ * 批 E2 規則層：把 CLI flags 組成工具參數。
+ *
+ * ⚠ **寫入類 action 才要 `--confirm` 與 `--id`**；`list`／`sandbox`／`seed` 零副作用（後兩者
+ *   會花 AI 額度但不寫任何東西），逼它們也帶確認閘只會讓人為了「看一下現況」多打兩個旗標。
+ * ⚠ 欄位驗證的真相在 Mons BE 的 SaaS service，這裡不做第二份 —— 只負責型別轉換與確認閘。
+ */
+function buildRulesArgs(flags, spec) {
+  const action = requireFlag(flags, "action", spec.actions.join("｜"));
+  if (!spec.actions.includes(action)) {
+    throw new Error(`--action 只能是：${spec.actions.join("｜")}（收到 ${action}）`);
+  }
+  const args = { action };
+  for (const [flag, key] of spec.strings || []) {
+    if (typeof flags[flag] === "string" && flags[flag].trim()) args[key] = flags[flag].trim();
+  }
+  for (const [flag, key] of spec.numbers || []) {
+    if (flags[flag] !== undefined && flags[flag] !== true && String(flags[flag]).trim() !== "") {
+      const n = Number(flags[flag]);
+      if (!Number.isFinite(n)) throw new Error(`--${flag} 要是數字`);
+      args[key] = n;
+    }
+  }
+  for (const [flag, key] of spec.booleans || []) {
+    if (flags[flag] === undefined) continue;
+    // `--x` 不帶值＝true；`--x false` 明確關掉（靜默當 true 會讓「關閉」變成「打開」）
+    args[key] = flags[flag] === true ? true : !["false", "0", "no", "off"].includes(String(flags[flag]).trim().toLowerCase());
+  }
+  for (const [flag, key] of spec.jsons || []) {
+    if (typeof flags[flag] !== "string" || !flags[flag].trim()) continue;
+    try {
+      args[key] = JSON.parse(flags[flag]);
+    } catch {
+      throw new Error(`--${flag} 要是合法 JSON`);
+    }
+  }
+  const isWrite = (spec.writeActions || []).includes(action);
+  if (isWrite) {
+    args.client_request_id = requireClientRequestId(flags);
+    args.confirm = true;
+    if ((spec.deleteActions || []).includes(action)) args.confirm_delete = true;
+  }
+  return { args, isWrite };
+}
+
 function requireComposeUrl(config) {
   if (!config.mcpUrl) {
     throw new Error(
@@ -376,6 +421,16 @@ const HELP = `niiice-social — Niiice Turbo 社群 MCP CLI（零依賴）
                                                              approve_outreach_reply（排入佇列，**不是**立即送出）
   dismiss-outreach --mention <id> --id <crid> [--confirm]     dismiss_outreach_reply
 
+規則層（能力「允許留言互動」；改的是「以後會自動發生的事」）
+  auto-reply --action list|set [--account <id>] [--platform …] [--enabled true|false] [--tone …] [--prompt …] --id <crid> [--confirm]
+                                                             set_auto_reply（set 沒帶到的欄位維持原值）
+  keyword-rules --action list|create|update|delete|reorder|sandbox [--rule <json>] [--rule-id <id>] [--account <id>] [--comment-text …] --id <crid> [--confirm]
+                                                             manage_keyword_rules（delete 要雙確認）
+  outreach-rules --action list|create|update|delete|seed|set_account|settings [--keyword-id <n>] [--rule <json>] [--pitch …] [--daily-cap <n>] --id <crid> [--confirm]
+                                                             manage_outreach_rules（seed 只回草稿；⚠ 自動送出同意書不能代簽）
+  radar-keywords --action list|create|update|delete|settings|save_trend|check_item [--keyword <字>] [--keyword-id <n>] [--item <id>] --id <crid> [--confirm]
+                                                             manage_radar_keywords（delete 連提及一起刪，要雙確認）
+
 擬稿（只回稿、不送出；任何 compose 連線都有）
   viral-check [--mode check|boost] [--content <文字>] [--dimension <維度>] [--job <job_id>]
                                                              viral_check（佇列式：先拿 job_id，再帶 --job 查結果）
@@ -449,6 +504,15 @@ async function run(argv, deps = {}) {
   const composeUrl = () => requireComposeUrl(config);
   const readUrl = () => requireReadUrl(config);
   const callAndPrint = async (url, tool, args) => printToolResult(io, await mcpCall(url, tool, args, net), { raw });
+  //: 批 E2 規則層四支共用（寫入類沒 --confirm 只印預覽、不打後端）
+  const rulesCommand = (spec) => {
+    const url = composeUrl();
+    const { args, isWrite } = buildRulesArgs(flags, spec);
+    if (isWrite && !confirm) {
+      return printDryRun(io, { url, tool: spec.tool, args, hint: `${spec.hint} 唸給使用者確認後加上 ${CONFIRM_FLAG} 再執行一次才會送出。` });
+    }
+    return callAndPrint(url, spec.tool, args);
+  };
 
   switch (command) {
     case "tools": {
@@ -722,6 +786,50 @@ async function run(argv, deps = {}) {
       if (!confirm) return printDryRun(io, { url, tool: "dismiss_outreach_reply", args, hint: `這會把那則草稿收掉（不回覆、也不排進佇列）。確認是哪一則後加上 ${CONFIRM_FLAG}。` });
       return callAndPrint(url, "dismiss_outreach_reply", args);
     }
+    // ── 批 E2：規則層寫入。寫入類 action 沒 --confirm 一律只印預覽、不打後端 ──
+    case "auto-reply":
+      return rulesCommand({
+        tool: "set_auto_reply",
+        actions: ["list", "set"],
+        writeActions: ["set"],
+        strings: [["account", "account_id"], ["platform", "platform"], ["tone", "tone"], ["prompt", "custom_prompt"], ["length", "reply_length"], ["language", "reply_language"]],
+        booleans: [["enabled", "enabled"], ["skip-negative", "skip_negative"]],
+        jsons: [["templates", "reply_templates"], ["faq", "faq_list"], ["brand", "brand_info"], ["strategy", "strategy"], ["assets", "preset_assets"]],
+        hint: "這會改掉那個帳號的留言自動回覆設定（沒帶到的欄位維持原值），從下一則留言起生效。",
+      });
+    case "keyword-rules":
+      return rulesCommand({
+        tool: "manage_keyword_rules",
+        actions: ["list", "create", "update", "delete", "reorder", "sandbox"],
+        writeActions: ["create", "update", "delete", "reorder"],
+        deleteActions: ["delete"],
+        strings: [["rule-id", "rule_id"], ["account", "account_id"], ["comment-text", "comment_text"], ["post", "post_id"]],
+        jsons: [["rule", "rule"], ["rule-ids", "rule_ids"]],
+        hint: "這會改掉關鍵字觸發回覆的規則（命中就直接回、不再交給 AI 自動回覆）。",
+      });
+    case "outreach-rules":
+      return rulesCommand({
+        tool: "manage_outreach_rules",
+        actions: ["list", "create", "update", "delete", "seed", "set_account", "settings"],
+        writeActions: ["create", "update", "delete", "set_account", "settings"],
+        deleteActions: ["delete"],
+        strings: [["rule-id", "rule_id"], ["account", "account_id"], ["pitch", "pitch"]],
+        numbers: [["keyword-id", "keyword_id"], ["daily-cap", "daily_cap"]],
+        booleans: [["notify-pending", "notify_pending"]],
+        jsons: [["rule", "rule"]],
+        hint: "這會改掉雷達主動回覆的規則或帳號層上限。⚠ 自動送出的風險同意書必須由使用者本人在雷達設定頁簽，這裡簽不了。",
+      });
+    case "radar-keywords":
+      return rulesCommand({
+        tool: "manage_radar_keywords",
+        actions: ["list", "create", "update", "delete", "settings", "save_trend", "check_item"],
+        writeActions: ["create", "update", "delete", "settings", "save_trend", "check_item"],
+        deleteActions: ["delete"],
+        strings: [["keyword", "keyword"], ["language-filter", "language_filter"], ["item", "item_id"], ["brand-context", "brand_context"]],
+        numbers: [["keyword-id", "keyword_id"], ["interval", "scan_interval_hours"]],
+        booleans: [["active", "is_active"], ["saved", "saved_to_library"], ["checked", "checked"], ["notify-useful", "notify_useful"]],
+        hint: "這會改掉雷達監測的關鍵字設定；delete 會連同底下的提及紀錄一起刪，救不回來。",
+      });
     // ── 批 C：擬稿（只回稿；**沒有 --confirm 這回事**，因為它不送出任何東西）──
     case "viral-check": {
       const args = {};
