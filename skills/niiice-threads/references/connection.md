@@ -1,6 +1,6 @@
 # 連線與 CLI 後備
 
-先依安裝包的 `INSTALL.md` 安裝 Skill，並在 AI Threads 的「MCP 設定」建立產草稿連線。預設只開草稿權限；需要排程／立即發布再由客戶開啟。一般版與 Lite 使用各自帳號的連線。
+先依安裝包的 `INSTALL.md` 安裝 Skill，並在 AI Threads 的「MCP 設定」建立產草稿連線。只需改稿／存草稿時，建立前取消排程發布、立即發布及留言互動的勾選；其他能力依客戶用途開啟。一般版與 Lite 使用各自帳號的連線。
 
 Claude Code：`claude mcp add --transport http --scope user niiice-social-compose "<客戶自己的產草稿 MCP URL>"`
 
