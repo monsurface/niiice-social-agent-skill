@@ -1,9 +1,9 @@
 ---
 name: niiice-social
-description: 透過 Niiice Turbo 的社群 MCP 讀取貼文／留言／成效／雷達，替使用者產生 Facebook／Instagram／Threads 貼文草稿、以網址附圖，並在使用者同意後排程（只能排 30 分鐘後，不能立即發布）。當使用者提到 Niiice Turbo 社群、發文草稿、排程貼文、留言工作匣、Threads 雷達時使用。
+description: 透過 Niiice Turbo 社群 MCP 讀取貼文、留言、成效與品牌，使用客戶模型或平台 AI 建立草稿，依使用者授權及連線能力排程、發布或互動。當使用者提到 Niiice 社群工作台、草稿、排程、留言或雷達時使用。
 license: Proprietary
 metadata:
-  updated: 2026-08-17
+  updated: 2026-10-05
   allowed-tools: Bash(node *), Read
 ---
 
@@ -14,7 +14,7 @@ metadata:
 | 連線 | 能做什麼 | 不能做什麼 |
 |------|---------|-----------|
 | 讀取連線（`niiice-social-inbox`） | 貼文、留言、成效、雷達關鍵字、Outreach、品牌、**品牌資源庫內容**、行事曆、用量，加上**期間彙總／帳號健康／帳號門面／發文後對話助攻／版型與選題庫／設定（唯讀）／自動化紀錄／雷達海巡／帳號探索與競品分析**（27 顆唯讀工具） | 任何寫入 |
-| 產草稿連線（`niiice-social-compose`） | 產貼文草稿（用使用者的 AI 額度）、以網址上傳圖片並附到草稿、**新增品牌資源庫的 FAQ／知識庫條目**；若使用者建立時勾了「允許 AI 排程發布」，還能預覽／排程／取消排程 | **立即發布**、回覆、刪除、隱藏、按讚；刪除或修改資源庫既有條目、動資料表 |
+| 產草稿連線（`niiice-social-compose`） | 讀寫作規則、客戶模型稿存回草稿或平台 AI 生成、上傳／附圖、新增 FAQ／知識庫；排程／立即發布／留言互動各依 scope 與能力開啟 | 沒有授予的能力；刪改資源庫既有條目與資料表 |
 
 ## 何時用
 
@@ -22,7 +22,13 @@ metadata:
 - 使用者要「看有哪些留言還沒回」「上週哪篇最好」「雷達關鍵字最近在講什麼」「品牌 FAQ 寫了什麼」→ 讀取連線（`inbox`、`library`、`call --read`）。
 - 使用者要「這個月成效如何」「帳號有沒有被限流」「自動回覆昨天回了什麼」「這個關鍵字現在有誰在講」→ 一樣走讀取連線，用 `call --read <tool>`（先 `tools --read` 看有哪幾顆；**沒有專用捷徑不代表沒這顆工具**）。⚠ 海巡與探索類（`search_threads`／`explore_threads`）預設只讀上次落地的結果，要真的重新去搜必須自己帶 `{"refresh":"auto"}`；`explore_threads` 的 `kind=competitor` 會**用掉使用者的社群 AI 額度**，先講再打。
 - 使用者要「把這條 Q&A 加進品牌 FAQ」「把這段說明放進知識庫」→ 產草稿連線 `add-item`（唸出品牌／清單／內容、取得同意後才 `--confirm`）。
-- 使用者要**立刻發**：不要試——本 MCP 沒有立即發布，請他到 Niiice Turbo 發文工作台自己按；你可以先幫他把草稿與圖準備好、給他 `resume_url`。
+- 使用者要**立刻發**：連線須開啟立即發布能力，使用 `preview-publish`／`publish`；能力沒開就提供草稿的 `resume_url`，讓使用者到工作台操作。
+
+## 用客戶自己的模型改寫 Threads
+
+一般版與 Lite 都可用：`options` → `brief --account <id> --purpose knowledge` → 由目前模型改稿 → `direct-draft --accounts <id> --content-file <UTF-8稿件> --brief <brief_id> --id <穩定UUID>`。
+最後一行只預覽；使用者已授權存草稿才加 `--confirm`。串文先 `split-preview` 核對再加 `--chain 0`。這條路不扣 Niiice 生成額度，客戶自己的 AI 帳號照各家用量計算；付費 `viral-check`／平台生成不自動呼叫。
+收到 `plan_no_generation` 不重試 `draft`，改走上述路線。只改稿時交稿即可；可攜版 Skill 為 `niiice-threads`（客戶安裝 ZIP 的說明另見對外安裝文件）。
 
 ## Setup
 
@@ -44,7 +50,7 @@ metadata:
 | `call <tool> [--json '{...}'] [--read] [--raw]` | 任意工具 | 通用出口；讀取工具一律加 `--read` |
 | `options` | `get_compose_options` | 先看帳號 id、品牌、任務／語氣／開頭／收尾的 key、剩餘額度、`capabilities` |
 | `draft --topic … --accounts a,b --id <crid> [--purpose --tone --length --hook --cta --task-input --instructions --media u1,u2 --template <版型key>] [--confirm]` | `create_post_draft` | 會用額度；**沒 `--confirm` 只印預覽**。`--length` 收 `auto｜short｜medium｜long` |
-| `draft --rewrite "<原文>" --accounts a,b --id <crid> [--rewrite-directions attract,condense] [--rewrite-chain 0 或 2-10] [--confirm]` | `create_post_draft`（改寫線） | **`--rewrite` 與 `--topic` 二擇一**；`--rewrite-chain 0` ＝段數交給 AI（只作用 Threads 那一組） |
+| `draft --rewrite "<原文>" --accounts a,b --id <crid> [--rewrite-directions to_knowledge,mobile_layout] [--rewrite-chain 0 或 2-10] [--confirm]` | `create_post_draft`（改寫線） | **`--rewrite` 與 `--topic` 二擇一**；方向 key 以 `options` 的 `rewrite_directions[].key` 為準（別背，會改）；`--rewrite-chain 0` ＝段數交給 AI（只作用 Threads 那一組） |
 | `get-draft <draft_id>` | `get_draft` | 輪詢用：首分鐘每 5 秒、之後每 15 秒 |
 | `drafts [--limit N]` | `list_recent_drafts` | |
 | `upload-media --url <圖片網址> [--alt] [--confirm]` | `upload_media_by_url` | 只收 http(s) 圖片（jpeg／png／webp／gif ≤10MB，不收影片）；同網址重傳拿回同一份；**沒 `--confirm` 只印預覽** |
